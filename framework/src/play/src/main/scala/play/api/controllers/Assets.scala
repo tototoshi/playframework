@@ -73,19 +73,30 @@ class AssetsBuilder extends Controller {
       case NonFatal(_) => None
     }
 
-    val resourceName = Option(path + "/" + file).map(name => if (name.startsWith("/")) name else ("/" + name)).get
+    def ensurePrefixedWithSlash(s: String): String = if (! s.startsWith("/")) "/" + s else s
 
-    if (new File(resourceName).isDirectory || !new File(resourceName).getCanonicalPath.startsWith(new File(path).getCanonicalPath)) {
+    def resourceFileExists(path: String, resourceName: String): Boolean = {
+      (! new File(resourceName).isDirectory) && new File(resourceName).getCanonicalPath.startsWith(new File(path).getCanonicalPath)
+    }
+
+    val resourceName = ensurePrefixedWithSlash(path + "/" + file)
+
+    if (! resourceFileExists(path, resourceName)) {
       NotFound
     } else {
 
+      def acceptEncodings(request: RequestHeader): Seq[String] = for {
+        acceptEncodingHeader <- request.headers.get(ACCEPT_ENCODING)
+        encoding <- acceptEncodingHeader.split(',')
+      } yield encoding.trim
+
+      def acceptGzipEncoding(request: RequestHeader): Boolean = acceptEncodings(request).contains("gzip")
+
       val gzippedResource = Play.resource(resourceName + ".gz")
 
-      val resource = {
-        gzippedResource.map(_ -> true)
-          .filter(_ => request.headers.get(ACCEPT_ENCODING).map(_.split(',').exists(_.trim == "gzip" && Play.isProd)).getOrElse(false))
+      val resource = gzippedResource.map(_ -> true)
+          .filter(_ => Play.isProd && acceptGzipEncoding(request))
           .orElse(Play.resource(resourceName).map(_ -> false))
-      }
 
       def maybeNotModified(url: java.net.URL) = {
         val etagResult = for {
