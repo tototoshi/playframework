@@ -88,14 +88,21 @@ class AssetsBuilder extends Controller {
       }
 
       def maybeNotModified(url: java.net.URL) = {
-        request.headers.get(IF_NONE_MATCH).flatMap { ifNoneMatch =>
-          etagFor(url).filter(_ == ifNoneMatch)
-        }.map(_ => cacheableResult(url, NotModified)).orElse {
-          request.headers.get(IF_MODIFIED_SINCE).flatMap(parseDate).flatMap { ifModifiedSince =>
-            lastModifiedFor(url).flatMap(parseDate).filterNot(lastModified => lastModified.after(ifModifiedSince))
-          }.map(_ => NotModified.withHeaders(
-            DATE -> df.print({ new java.util.Date }.getTime)))
-        }
+        val etagResult = for {
+          ifNoneMatchHeader <- request.headers.get(IF_NONE_MATCH)
+          etag <- etagFor(url)
+          if ifNoneMatchHeader == etag
+        } yield cacheableResult(url, NotModified)
+
+        lazy val lastModifiedResult = for {
+          ifModifiedSinceHeader <- request.headers.get(IF_MODIFIED_SINCE)
+          ifModifiedSince <- parseDate(ifModifiedSinceHeader)
+          cachedLastModified <- lastModifiedFor(url)
+          lastModified <- parseDate(cachedLastModified)
+          if ! lastModified.after(ifModifiedSince)
+        } yield NotModified.withHeaders(DATE -> df.print((new java.util.Date).getTime))
+
+        etagResult.orElse(lastModifiedResult)
       }
 
       def cacheableResult[A <: Result](url: java.net.URL, r: A) = {
